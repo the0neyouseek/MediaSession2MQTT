@@ -17,6 +17,13 @@ import be.digitalia.mediasession2mqtt.mqttmediaplayer.getPlayingPositionDrift
 import be.digitalia.mediasession2mqtt.mqttmediaplayer.toMQTTPlaybackStateOrNull
 import be.digitalia.mediasession2mqtt.mqttmediaplayer.toMediaDurationInMillis
 import be.digitalia.mediasession2mqtt.mqttmediaplayer.toMediaTitle
+import be.digitalia.mediasession2mqtt.s0undtv.S0undTvLogParser
+import be.digitalia.mediasession2mqtt.s0undtv.S0undTvMetadata
+import be.digitalia.mediasession2mqtt.s0undtv.S0undTvSession
+import be.digitalia.mediasession2mqtt.s0undtv.S0undTvSessionTracker
+import be.digitalia.mediasession2mqtt.s0undtv.toMQTTMediaMetadata
+import be.digitalia.mediasession2mqtt.s0undtv.toMQTTPlaybackState
+import be.digitalia.mediasession2mqtt.s0undtv.toS0undTvMetadata
 import be.digitalia.mediasession2mqtt.service.MediaSessionListenerService
 import be.digitalia.mediasession2mqtt.settings.SettingsProvider
 import dev.zacsweers.metro.Inject
@@ -37,6 +44,9 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.fold
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -47,17 +57,34 @@ class MainWorker(
     private val connectivityChecker: ConnectivityChecker,
     private val settingsProvider: SettingsProvider,
     private val mqttClientFactory: MQTTPublishClient.Factory,
+    s0undTvSessionTracker: S0undTvSessionTracker,
 ) {
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    // S0undTV has no MediaSession: while one of its sessions is active, it is published instead of the MediaSession.
+    // Shared so the four publishers below read a single logcat process.
+    private val s0undTvSession: StateFlow<S0undTvSession?> =
+        s0undTvSessionTracker.session.stateIn(coroutineScope, SharingStarted.WhileSubscribed(), null)
 
     private val applicationIdFlow: Flow<String> =
         currentMediaControllerDetector.currentMediaController.map { mediaController ->
             mediaController?.packageName.orEmpty()
+        }.combine(s0undTvSession) { applicationId, session ->
+            if (session != null) S0undTvLogParser.PACKAGE_NAME else applicationId
         }.distinctUntilChanged()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val playbackStateFlow: Flow<MQTTPlaybackState> =
-        currentMediaControllerDetector.currentMediaController.flatMapLatest { mediaController ->
+        s0undTvSession.flatMapLatest { session ->
+            when (session) {
+                null -> mediaSessionPlaybackStateFlow
+                else -> flowOf(session.toMQTTPlaybackState())
+            }
+        }.buffer(Channel.RENDEZVOUS)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val mediaSessionPlaybackStateFlow: Flow<MQTTPlaybackState>
+        get() = currentMediaControllerDetector.currentMediaController.flatMapLatest { mediaController ->
             when (mediaController) {
                 null -> flowOf(MQTTPlaybackState.Idle)
                 else -> mediaController.playbackStateFlow
@@ -69,11 +96,23 @@ class MainWorker(
                     }
                     .mapNotNull { it?.toMQTTPlaybackStateOrNull() }
             }
-        }.buffer(Channel.RENDEZVOUS)
+        }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val mediaMetadataFlow: Flow<MQTTMediaMetadata> =
-        currentMediaControllerDetector.currentMediaController.flatMapLatest { mediaController ->
+        s0undTvSession.flatMapLatest { session ->
+            when (session) {
+                null -> mediaSessionMetadataFlow
+                else -> flowOf(session.toMQTTMediaMetadata())
+            }
+        }.buffer(Channel.RENDEZVOUS)
+
+    private val s0undTvMetadataFlow: Flow<S0undTvMetadata> =
+        s0undTvSession.map { it.toS0undTvMetadata() }.distinctUntilChanged()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val mediaSessionMetadataFlow: Flow<MQTTMediaMetadata>
+        get() = currentMediaControllerDetector.currentMediaController.flatMapLatest { mediaController ->
             when (mediaController) {
                 null -> flowOf(MQTTMediaMetadata())
                 else -> mediaController.metadataFlow
@@ -84,7 +123,7 @@ class MainWorker(
                         )
                     }
             }
-        }.buffer(Channel.RENDEZVOUS)
+        }
 
     private suspend fun monitorSettings() {
         // The publishing coroutine is only active when settings are valid and the active network is connected
@@ -102,6 +141,7 @@ class MainWorker(
                                 launch { publishApplicationId(client, qosLevel, deviceId) }
                                 launch { publishPlaybackState(client, qosLevel, deviceId) }
                                 launch { publishMediaMetadata(client, qosLevel, deviceId) }
+                                launch { publishS0undTvMetadata(client, qosLevel, deviceId) }
                             }
                         }
                     } finally {
@@ -200,6 +240,25 @@ class MainWorker(
         }
     }
 
+    private suspend fun publishS0undTvMetadata(
+        client: MQTTPublishClient,
+        qosLevel: MQTTQoSLevel,
+        deviceId: Int
+    ) {
+        s0undTvMetadataFlow.fold(null as S0undTvMetadata?) { previous, metadata ->
+            if (previous?.kind != metadata.kind) {
+                client.tryConnectAndPublish(qosLevel, "$ROOT_TOPIC/$deviceId/$MEDIA_KIND_SUB_TOPIC", metadata.kind)
+            }
+            if (previous?.channel != metadata.channel) {
+                client.tryConnectAndPublish(qosLevel, "$ROOT_TOPIC/$deviceId/$CHANNEL_SUB_TOPIC", metadata.channel)
+            }
+            if (previous?.broadcastId != metadata.broadcastId) {
+                client.tryConnectAndPublish(qosLevel, "$ROOT_TOPIC/$deviceId/$BROADCAST_ID_SUB_TOPIC", metadata.broadcastId)
+            }
+            metadata
+        }
+    }
+
     fun start() {
         coroutineScope.launch {
             monitorSettings()
@@ -225,6 +284,9 @@ class MainWorker(
         private const val PLAYBACK_POSITION_SUB_TOPIC = "playbackPosition"
         private const val MEDIA_TITLE_SUB_TOPIC = "mediaTitle"
         private const val MEDIA_DURATION_SUB_TOPIC = "mediaDuration"
+        private const val MEDIA_KIND_SUB_TOPIC = "mediaKind"
+        private const val CHANNEL_SUB_TOPIC = "channel"
+        private const val BROADCAST_ID_SUB_TOPIC = "broadcastId"
 
         private const val HASS_ROOT_TOPIC = "homeassistant"
         private val HASS_SENSORS = listOf(
@@ -261,6 +323,25 @@ class MainWorker(
                 subTopic = MEDIA_DURATION_SUB_TOPIC,
                 deviceClass = "duration",
                 unitOfMeasurement = "ms"
+            ),
+            // Only filled for S0undTV (Twitch), empty otherwise
+            Sensor(
+                name = "Media Kind",
+                serializedName = "media_kind",
+                icon = "mdi:broadcast",
+                subTopic = MEDIA_KIND_SUB_TOPIC
+            ),
+            Sensor(
+                name = "Channel",
+                serializedName = "channel",
+                icon = "mdi:account-voice",
+                subTopic = CHANNEL_SUB_TOPIC
+            ),
+            Sensor(
+                name = "Broadcast Id",
+                serializedName = "broadcast_id",
+                icon = "mdi:identifier",
+                subTopic = BROADCAST_ID_SUB_TOPIC
             )
         )
     }

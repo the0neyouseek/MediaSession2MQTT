@@ -11,14 +11,26 @@ android {
         applicationId = "be.digitalia.mediasession2mqtt"
         minSdk = 22
         targetSdk = 37
-        versionCode = 2200116
-        versionName = "1.1.6"
+        versionCode = 2200117
+        versionName = "1.1.6-s0undtv.1"
 
         androidResources.localeFilters += listOf("en")
     }
 
+    // Fork-only: sign with a local key when ~/.gradle/gradle.properties provides one, otherwise build unsigned as upstream
+    val forkKeystore = providers.gradleProperty("MS2MQTT_KEYSTORE").orNull
+    val forkSigningConfig = forkKeystore?.let {
+        signingConfigs.create("fork") {
+            storeFile = file(it)
+            storePassword = providers.gradleProperty("MS2MQTT_KEYSTORE_PASSWORD").get()
+            keyAlias = providers.gradleProperty("MS2MQTT_KEY_ALIAS").get()
+            keyPassword = providers.gradleProperty("MS2MQTT_KEY_PASSWORD").get()
+        }
+    }
+
     buildTypes {
         release {
+            forkSigningConfig?.let { signingConfig = it }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -63,4 +75,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kmqtt.common)
     implementation(libs.kmqtt.client)
+
+    testImplementation(libs.junit)
 }

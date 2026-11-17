@@ -14,6 +14,7 @@ import android.widget.Toast
 import be.digitalia.mediasession2mqtt.BuildConfig
 import be.digitalia.mediasession2mqtt.R
 import be.digitalia.mediasession2mqtt.inject.appGraph
+import be.digitalia.mediasession2mqtt.logcat.LogcatSource
 import be.digitalia.mediasession2mqtt.mediasession.CurrentMediaControllerDetector
 import be.digitalia.mediasession2mqtt.mqtt.MQTTPublishClient
 import be.digitalia.mediasession2mqtt.mqtt.testConnection
@@ -44,6 +45,8 @@ class SettingsActivity : PreferenceActivity() {
     private lateinit var mqttClientFactory: MQTTPublishClient.Factory
     @Inject
     private lateinit var currentMediaControllerDetector: CurrentMediaControllerDetector
+    @Inject
+    private lateinit var logcatSource: LogcatSource
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val statusSummary: Flow<CharSequence> by lazy(LazyThreadSafetyMode.NONE) {
@@ -92,6 +95,7 @@ class SettingsActivity : PreferenceActivity() {
         setupEditTextPreferenceSimpleSummaryProvider(PreferenceKeys.DEVICE_ID, clearTextFilter)
 
         setupConnectionTest()
+        setupS0undTvSummary()
         setupNotificationListenerLink()
         populateVersion()
     }
@@ -150,6 +154,15 @@ class SettingsActivity : PreferenceActivity() {
             }
             true
         }
+    }
+
+    private fun setupS0undTvSummary() {
+        findPreference(PreferenceKeys.S0UNDTV_ENABLED)?.summary =
+            if (logcatSource.hasReadLogsPermission()) {
+                getString(R.string.settings_s0undtv_summary_granted)
+            } else {
+                getString(R.string.settings_s0undtv_summary_missing, packageName)
+            }
     }
 
     private fun setupNotificationListenerLink() {

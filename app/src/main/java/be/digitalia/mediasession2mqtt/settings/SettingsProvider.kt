@@ -76,6 +76,10 @@ class SettingsProvider(context: Context) {
         get() = sharedPreferences.getAsFlow({ key -> key == PreferenceKeys.HASS_INTEGRATION_ENABLED },
             { getBoolean(PreferenceKeys.HASS_INTEGRATION_ENABLED, false) })
 
+    val isS0undTvEnabled: Flow<Boolean>
+        get() = sharedPreferences.getAsFlow({ key -> key == PreferenceKeys.S0UNDTV_ENABLED },
+            { getBoolean(PreferenceKeys.S0UNDTV_ENABLED, true) }).distinctUntilChanged()
+
     val messageSettings: Flow<MessageSettings>
         get() = sharedPreferences.getAsFlow({ key -> key == PreferenceKeys.DEVICE_ID || key == PreferenceKeys.QOS_LEVEL },
             { messageSettings }).distinctUntilChanged()

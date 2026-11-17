@@ -12,6 +12,11 @@
             android:key="hass_integration_enabled"
             android:summary="@string/settings_hass_integration_enabled_summary"
             android:title="@string/settings_hass_integration_enabled" />
+        <SwitchPreference
+            android:defaultValue="true"
+            android:dependency="enabled"
+            android:key="s0undtv_enabled"
+            android:title="@string/settings_s0undtv_enabled" />
     </PreferenceCategory>
 
     <PreferenceCategory

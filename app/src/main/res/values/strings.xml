@@ -6,6 +6,9 @@
     <string name="settings_enabled">Enabled</string>
     <string name="settings_hass_integration_enabled">Enable Home Assistant integration</string>
     <string name="settings_hass_integration_enabled_summary">Publish MQTT Discovery configuration</string>
+    <string name="settings_s0undtv_enabled">S0undTV (Twitch) from system logs</string>
+    <string name="settings_s0undtv_summary_granted">READ_LOGS granted: live streams and VODs are published</string>
+    <string name="settings_s0undtv_summary_missing">READ_LOGS missing. Grant it over ADB, then restart the app:\nadb shell pm grant %1$s android.permission.READ_LOGS</string>
 
     <string name="settings_server_connection">MQTT server connection</string>
     <string name="settings_protocol_version">Protocol version</string>
