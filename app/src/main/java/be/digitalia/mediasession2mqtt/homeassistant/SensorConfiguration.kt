@@ -44,8 +44,6 @@ private fun JsonWriter.writeSensor(
     value(sensorTopic)
     name("device")
     writeDeviceInfo(deviceId)
-    name("device")
-    writeDeviceInfo(deviceId)
     sensorDeviceClass?.let {
         name("device_class")
         value(it)
